@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🦖 Dino Runner | Simple Jumping Game</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    body {
+      background: linear-gradient(145deg, #2b3b4e 0%, #1f2c38 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Courier New', 'Press Start 2P', monospace;
+      padding: 1rem;
+    }
+
+    /* Game container - centered flex column */
+    .game-container {
+      background: #f7f7f0;
+      border-radius: 2rem;
+      padding: 1rem;
+      box-shadow: 0 20px 35px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    canvas {
+      display: block;
+      margin: 0 auto;
+      border-radius: 1rem;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+      cursor: pointer;
+      background: #fef9e6;
+    }
+
+    .info-panel {
+      margin-top: 1.2rem;
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .score-box {
+      background: #2c3e2f;
+      color: #e9f5db;
+      padding: 0.4rem 1.2rem;
+      border-radius: 2rem;
+      font-weight: bold;
+      font-size: 1.2rem;
+      letter-spacing: 1px;
+    }
+
+    .restart-btn {
+      background: #ffb347;
+      border: none;
+      font-family: inherit;
+      font-weight: bold;
+      font-size: 1rem;
+      padding: 0.4rem 1.2rem;
+      border-radius: 2rem;
+      cursor: pointer;
+      transition: 0.2s;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    .restart-btn:hover {
+      background: #ff9f1c;
+      transform: scale(0.97);
+    }
+
+    .instruction {
+      font-size: 0.8rem;
+      background: #e0e7d9;
+      padding: 0.3rem 1rem;
+      border-radius: 2rem;
+      color: #3a4a3b;
+    }
+
+    @media (max-width: 550px) {
+      .info-panel {
+        justify-content: center;
+      }
+      .score-box {
+        font-size: 1rem;
+      }
+      .instruction {
+        font-size: 0.7rem;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="game-container">
+  <canvas id="gameCanvas" width="800" height="250"></canvas>
+  <div class="info-panel">
+    <div class="score-box">🏆 SCORE: <span id="scoreValue">0</span></div>
+    <button class="restart-btn" id="restartButton">🔄 RESTART</button>
+    <div class="instruction">⬆️ SPACE / CLICK → JUMP</div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ---------- CANVAS ELEMENTS ----------
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreSpan = document.getElementById('scoreValue');
+
+    // ---------- GAME DIMENSIONS ----------
+    const CANVAS_W = 800;
+    const CANVAS_H = 250;
+    canvas.width = CANVAS_W;
+    canvas.height = CANVAS_H;
+
+    // ---------- GAME STATE ----------
+    let gameRunning = true;
+    let score = 0;
+    let frame = 0;          // used for obstacle spawn timing
+    let animationId = null;
+
+    // ---------- DINO OBJECT ----------
+    const DINO_WIDTH = 28;
+    const DINO_HEIGHT = 32;
+    let dino = {
+      x: 70,
+      y: CANVAS_H - DINO_HEIGHT - 10,   // ground level (y = groundY - height)
+      width: DINO_WIDTH,
+      height: DINO_HEIGHT,
+      ySpeed: 0,
+      isJumping: false,
+      groundY: CANVAS_H - DINO_HEIGHT - 10   // base Y on ground
+    };
+
+    // Gravity & jump physics (simple)
+    const GRAVITY = 0.8;
+    const JUMP_POWER = -11;
+
+    // ---------- OBSTACLE (CACTUS) ----------
+    const OBSTACLE_WIDTH = 18;
+    const OBSTACLE_HEIGHT = 28;
+    let obstacles = [];
+
+    // obstacle spawn config
+    let baseSpawnDelay = 80;      // frames between spawns (decreases with score)
+    let spawnCounter = 0;
+
+    // ground line (for visual)
+    const GROUND_Y = CANVAS_H - 12;
+
+    // ---------- HELPER FUNCTIONS ----------
+    function updateScoreUI() {
+      scoreSpan.innerText = Math.floor(score);
+    }
+
+    // reset everything
+    function resetGame() {
+      gameRunning = true;
+      score = 0;
+      frame = 0;
+      obstacles = [];
+      spawnCounter = 5;   // quick first obstacle
+      updateScoreUI();
+
+      // reset dino physics
+      dino.y = dino.groundY;
+      dino.ySpeed = 0;
+      dino.isJumping = false;
+    }
+
+    // collision detection (rect vs rect)
+    function checkCollision(dinoRect, obstacleRect) {
+      return (dinoRect.x < obstacleRect.x + obstacleRect.w &&
+              dinoRect.x + dinoRect.w > obstacleRect.x &&
+              dinoRect.y < obstacleRect.y + obstacleRect.h &&
+              dinoRect.y + dinoRect.h > obstacleRect.y);
+    }
+
+    // update game logic (physics, obstacles, score)
+    function updateGame() {
+      if (!gameRunning) return;
+
+      // 1. DINO PHYSICS (jump & gravity)
+      if (dino.isJumping) {
+        dino.ySpeed += GRAVITY;
+        dino.y += dino.ySpeed;
+
+        // collision with ground
+        if (dino.y >= dino.groundY) {
+          dino.y = dino.groundY;
+          dino.isJumping = false;
+          dino.ySpeed = 0;
+        }
+
+        // ceiling limit (optional, prevent too high)
+        if (dino.y < 0) {
+          dino.y = 0;
+          if (dino.ySpeed < 0) dino.ySpeed = 0;
+        }
+      }
+
+      // 2. SPAWN OBSTACLES (dynamic delay based on score)
+      let dynamicSpawnDelay = Math.max(35, baseSpawnDelay - Math.floor(score / 400));
+      if (spawnCounter <= 0) {
+        // create new cactus
+        obstacles.push({
+          x: CANVAS_W,
+          y: GROUND_Y - OBSTACLE_HEIGHT + 4,   // sit on ground
+          width: OBSTACLE_WIDTH,
+          height: OBSTACLE_HEIGHT
+        });
+        spawnCounter = dynamicSpawnDelay;
+      } else {
+        spawnCounter--;
+      }
+
+      // 3. MOVE OBSTACLES & REMOVE OFFSCREEN
+      for (let i = 0; i < obstacles.length; i++) {
+        obstacles[i].x -= 5;   // movement speed (increase with score later)
+        // optional: speed boost with score
+        if (score > 800) obstacles[i].x -= 1.2;
+        else if (score > 400) obstacles[i].x -= 0.8;
+      }
+      // filter out obstacles that left canvas
+      obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
+
+      // 4. COLLISION DETECTION (dino vs obstacles)
+      const dinoRect = {
+        x: dino.x,
+        y: dino.y,
+        w: DINO_WIDTH,
+        h: DINO_HEIGHT
+      };
+      for (let obs of obstacles) {
+        const obsRect = {
+          x: obs.x,
+          y: obs.y,
+          w: obs.width,
+          h: obs.height
+        };
+        if (checkCollision(dinoRect, obsRect)) {
+          gameRunning = false;   // GAME OVER
+          break;
+        }
+      }
+
+      // 5. SCORE increment (each frame while alive)
+      if (gameRunning) {
+        // increase score gradually (based on time alive)
+        score += 0.2;
+        updateScoreUI();
+      }
+    }
+
+    // ---------- DRAW EVERYTHING (canvas) ----------
+    function drawGround() {
+      ctx.fillStyle = '#d6c99e';
+      ctx.fillRect(0, GROUND_Y, CANVAS_W, 8);
+      ctx.fillStyle = '#b3a05c';
+      ctx.fillRect(0, GROUND_Y + 6, CANVAS_W, 4);
+      // small grass detail
+      ctx.fillStyle = '#7d8c5e';
+      for (let i = 0; i < 12; i++) {
+        ctx.fillRect(i * 70 + (frame % 70), GROUND_Y - 3, 2, 6);
+      }
+    }
+
+    function drawDino() {
+      // Dino body (friendly green)
+      ctx.fillStyle = '#3c6e47';
+      ctx.shadowBlur = 0;
+      ctx.fillRect(dino.x, dino.y, DINO_WIDTH, DINO_HEIGHT);
+      // belly
+      ctx.fillStyle = '#5b8c5a';
+      ctx.fillRect(dino.x + 4, dino.y + DINO_HEIGHT - 8, 8, 6);
+      // eye
+      ctx.fillStyle = 'white';
+      ctx.fillRect(dino.x + 20, dino.y + 8, 6, 6);
+      ctx.fillStyle = '#1f2a1b';
+      ctx.fillRect(dino.x + 22, dino.y + 10, 3, 3);
+      // spikes on back
+      ctx.fillStyle = '#2c5a2a';
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(dino.x + 6 + i * 7, dino.y - 4, 4, 6);
+      }
+      // leg movement (simple animation: just small lines)
+      ctx.fillStyle = '#2c4e2c';
+      ctx.fillRect(dino.x + 5, dino.y + DINO_HEIGHT - 4, 6, 5);
+      ctx.fillRect(dino.x + 17, dino.y + DINO_HEIGHT - 4, 6, 5);
+    }
+
+    function drawObstacles() {
+      for (let obs of obstacles) {
+        // draw cactus (green with spikes)
+        ctx.fillStyle = '#2b5e2b';
+        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+        ctx.fillStyle = '#1f461f';
+        ctx.fillRect(obs.x + 4, obs.y - 5, 4, 8);
+        ctx.fillRect(obs.x + 10, obs.y - 3, 4, 7);
+        // small details
+        ctx.fillStyle = '#5b8c42';
+        ctx.fillRect(obs.x + 2, obs.y + 6, 3, 5);
+      }
+    }
+
+    function drawScoreOnCanvas() {
+      ctx.font = 'bold 18px "Courier New", monospace';
+      ctx.fillStyle = '#2c3e2f';
+      ctx.shadowBlur = 0;
+      ctx.fillText(`SCORE: ${Math.floor(score)}`, CANVAS_W - 120, 35);
+    }
+
+    function drawGameOver() {
+      ctx.font = 'bold 26px "Courier New", monospace';
+      ctx.fillStyle = '#2d2b1f';
+      ctx.shadowBlur = 0;
+      ctx.fillText('GAME OVER', CANVAS_W/2 - 85, CANVAS_H/2 - 30);
+      ctx.font = '14px monospace';
+      ctx.fillStyle = '#664e2c';
+      ctx.fillText('click RESTART or press R', CANVAS_W/2 - 115, CANVAS_H/2 + 15);
+    }
+
+    function drawClouds() {
+      ctx.fillStyle = '#e0dfc6aa';
+      let cloudX = (frame * 0.3) % 500;
+      ctx.beginPath();
+      ctx.ellipse(80 + cloudX, 45, 25, 20, 0, 0, Math.PI * 2);
+      ctx.ellipse(110 + cloudX, 40, 30, 25, 0, 0, Math.PI * 2);
+      ctx.ellipse(140 + cloudX, 48, 22, 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(500 - cloudX * 0.7, 70, 28, 22, 0, 0, Math.PI * 2);
+      ctx.ellipse(530 - cloudX * 0.7, 68, 32, 24, 0, 0, Math.PI * 2);
+      ctx.ellipse(560 - cloudX * 0.7, 74, 24, 20, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // main draw loop
+    function draw() {
+      ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+      // background sky
+      ctx.fillStyle = '#fef3cf';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      drawClouds();
+      drawGround();
+      drawObstacles();
+      drawDino();
+      drawScoreOnCanvas();
+
+      if (!gameRunning) {
+        drawGameOver();
+      }
+    }
+
+    // ---------- JUMP MECHANICS ----------
+    function jump() {
+      if (!gameRunning) return;
+      // can only jump if dino is on ground (not jumping)
+      if (!dino.isJumping && dino.y >= dino.groundY - 1) {
+        dino.isJumping = true;
+        dino.ySpeed = JUMP_POWER;
+        // tiny sound-like vibe? just visual, no audio needed.
+      }
+    }
+
+    // ---------- RESTART FUNCTION ----------
+    function restartGame() {
+      resetGame();
+      gameRunning = true;
+    }
+
+    // ---------- GAME LOOP (update + draw) ----------
+    function gameLoop() {
+      updateGame();
+      draw();
+      frame++;
+      animationId = requestAnimationFrame(gameLoop);
+    }
+
+    // ---------- EVENT HANDLERS ----------
+    function handleKeydown(e) {
+      // Jump with Space or ArrowUp
+      if (e.code === 'Space' || e.code === 'ArrowUp') {
+        e.preventDefault();
+        jump();
+      }
+      // Restart with 'R' key
+      if (e.code === 'KeyR') {
+        e.preventDefault();
+        restartGame();
+      }
+    }
+
+    function handleCanvasClick(e) {
+      e.preventDefault();
+      jump();
+    }
+
+    // restart button
+    const restartBtn = document.getElementById('restartButton');
+    restartBtn.addEventListener('click', () => {
+      restartGame();
+    });
+
+    // Touch / mobile support: canvas tap to jump
+    canvas.addEventListener('click', handleCanvasClick);
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      jump();
+    });
+
+    window.addEventListener('keydown', handleKeydown);
+
+    // ---------- INIT GAME ----------
+    resetGame();
+    gameLoop();
+  })();
+</script>
+</body>
+</html>
